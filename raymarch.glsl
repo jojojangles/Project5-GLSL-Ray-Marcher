@@ -89,6 +89,43 @@ float sdConeSection( in vec3 p, in float h, in float r1, in float r2 )
     return length(max(vec2(d1,d2),0.0)) + min(max(d1,d2), 0.);
 }
 
+
+float hash( float n ) //util for noise
+{
+    return fract(sin(n)*43758.5453);
+}
+
+float lerp(float a, float b, float t) //util for noise
+{
+    return (1.0-t)*a + t*b;
+}
+
+const float noiseScale = 5.0;
+
+float noise( vec3 p ) //make noise a distance function?
+{
+    // range -1.0f -> 1.0f
+    vec3 pf = floor(p*noiseScale);
+    vec3 f = fract(p*noiseScale);
+    f = f*f*(3.0-2.0*f);
+    float n = pf.x + pf.y*57.0 + 113.0*pf.z;
+
+    float h0 = hash(n+0.0);
+    float h1 = hash(n+1.0);
+    float h57 = hash(n+57.0);
+    float h58 = hash(n+58.0);
+    float h113 = hash(n+113.0);
+    float h114 = hash(n+114.0);
+    float h170 = hash(n+170.0);
+    float h171 = hash(n+171.0);
+    float height = lerp(lerp(lerp(h0,h1,f.x),
+                   lerp(h57,h58,f.x),f.y),
+               lerp(lerp(h113,h114,f.x),
+                   lerp(h170,h171,f.x),f.y),f.z);
+    return  clamp(height,-1.0,1.0);
+}
+
+
 // ------------------------
 // Operators
 // ------------------------
@@ -121,61 +158,102 @@ vec3 opTwist( vec3 p )
 // ------------------------
 vec2 map( in vec3 pos )
 {
-    vec2 res = opU (vec2(sdPlane(pos),1.0),vec2(sdCylinder(pos,vec2(2.0,0.05)),1.0));
-    float pit1 = opS(res.x,sdCylinder(pos, vec2(1.9,0.1)));
-    float pit2 = opS(pit1,sdCylinder(pos, vec2(1.8,0.2)));
-    float pit3 = opS(pit2,sdCylinder(pos, vec2(1.7,0.3)));
+    vec2 res = opU(vec2(sdCylinder(pos-vec3(0.0,-.25,0.0),vec2(1.9,0.25)),1.0),vec2(sdCylinder(pos,vec2(1.8,0.05)),1.0));
+    float pit1 = opS(res.x,sdCylinder(pos, vec2(1.7,0.1)));
+    float pit2 = opS(pit1,sdCylinder(pos, vec2(1.6,0.2)));
+    float pit3 = opS(pit2,sdCylinder(pos, vec2(1.5,0.3)));
     float pit4 = opS(pit3,sdTorus(pos,vec2(1.0,.5)));
     res = opU( vec2( pit4,1.0),
-	                vec2( sdSphere(pos-vec3(-1.0,0.15, 0.0), 0.25 ), 50 ) );
+	                vec2( sdSphere(pos-vec3(-1.0,0.15, 0.0), 0.25 ), 2.0 ) );
     res = opU( res,
-               vec2( sdBox(pos-vec3(1.0,.5,-0.5), vec3(0.25,0.1,0.25)), 25) );
+               vec2( udRoundBox(pos-vec3(1.0,0.5,0.0),vec3(0.25,0.15,0.25), .05), 3.0) );
     res = opU( res,
-               vec2(sdSphere(pos-vec3(0.0,0.0, 0.0), 0.25 ), 10) );
+               vec2(sdSphere(pos-vec3(0.0,-0.05, 0.0), 0.25 ), 4.0) );
     return res;
 }
 
 // ------------------------
 // Rendery Bits
 // ------------------------
+const float PI = 3.14159265;
 const vec3 dirLight = normalize(vec3(-5.0,15.0,-5.0)); //this is TO light, kind of
-const vec3 ptLight = vec3(0.0,1.0,0.0);
-const float tmin = .002;
+const vec3 ptLight = vec3(2.5,5.0,2.5);
+const float tmin = .001;
 const float tmax = 10.0;
+const float staticT = 0.1;
+const int iterations = 100;
 const float precis = 0.002;
-const float eps = 0.01;
-const float k = 32.0; //ao, soft shadows
-const vec3 ambient = vec3(0.2,0.2,0.5);
-const float ambK = 0.01;
+const float eps = 0.05;
+const float k = 16.0; //ao, soft shadows
+const vec3 ambient = vec3(0.5,0.5,0.85);
+const float ambK = 0.011;
+const bool sphereJump = true;
 
-vec2 castRay( in vec3 ro, in vec3 rd )
+vec3 getMaterialColor(in float id)
+{
+    if(id == 1.0) {return vec3(.85);}
+    if(id == 2.0) {return vec3(.85,0.0,0.0);}
+    if(id == 3.0) {return vec3(0.0,.85,0.0);}
+    if(id == 4.0) {return vec3(0.0,0.0,.85);}
+    else return vec3(0.25);
+}
+
+vec3 getBump(in float id, in vec2 uv)
+{
+    //if(id == 1.0) {return texture2D(iChannel0,uv).xyz;}
+    //else if(id == 3.0) {return texture2D(iChannel1,uv).xyz;}
+    return vec3(0.0);
+}
+
+vec3 castRay( in vec3 ro, in vec3 rd )
 {
     float t = tmin;
     float m = -1.0;
-    for( int i=0; i<50; i++ )
+    int blah = 0;
+
+    //"Geometry" loop
+    for(int i=0; i<iterations; i++)
     {
 	    vec2 res = map( ro+rd*t );
         if( res.x<precis || t>tmax ) break;
-        t += res.x;
+        if(!sphereJump) {t += staticT;} //constant t increments
+        else {t += res.x;} //jump by nearest distance
 	    m = res.y;
+        blah++;
     }
 
+    //"Terrain" loop - has to be naive, no sphere jumping!
+    float t2 = tmin;
+    for(int i=0; i<iterations; i++)
+    {
+        vec3 pt = ro+rd*t2;
+        if(pt.y < noise(pt)) {break;}
+        else t2 += staticT;
+    }
+
+    if(t2 < t) { t = t2; m = 999.0;}
     if( t>tmax ) m=-1.0;
-    return vec2( t, m );
+    return vec3( t, m, float(blah));
 }
 
-vec3 getNormal(in vec3 p )
+vec3 getNormal(in vec3 p, in float m )
 {
     vec2 hxe = map(p + vec3(eps,0,0));
     vec2 hye = map(p + vec3(0,eps,0));
     vec2 hze = map(p + vec3(0,0,eps));
 
     vec3 n = (1.0/eps) * (map(p).x - vec3(hxe.x,hye.x,hze.x));
-    return normalize(-n);
+
+    vec2 uv = vec2(0.5 + atan(n.z,n.x)/(2.0 * PI),0.5 - asin(n.y)/PI);
+    vec3 alt = getBump(m,uv);
+
+    //return normalize(-n);
+    return -normalize(n + alt);
 }
 
+
 float getShadow(in vec3 ro, in vec3 rd) { //ro - point, rd - light direction
-    vec2 ray = castRay(ro,rd);
+    vec3 ray = castRay(ro,rd);
     float t = ray.x;
     float m = ray.y;
     if(m>-0.5) {
@@ -191,7 +269,8 @@ float getSoft(in vec3 ro, in vec3 rd) {
         float dist = map(ro + t*rd).x;
         if(dist < eps) {return 0.0;}
         shade = min(shade, k*dist/t);
-        t += dist;
+        if(!sphereJump) {t += staticT;} //constant t increments
+        else {t += dist;} //jump by nearest distance
     }
     return clamp(shade, 0.0, 1.0);
 }
@@ -201,10 +280,10 @@ float getLighting(in vec3 n, in vec3 p) {
     return dot(n,ptDir) * getSoft(p,ptDir);
 }
 
-float getAO(in vec3 p) {
+float getAO(in vec3 p, in float m) {
     //separately calculate the 5 'feelers'?
     //totally should have done this in a loop :(
-    vec3 n = getNormal(p);
+    vec3 n = getNormal(p,m);
     float f = 0.5 * (eps - map(p + n*eps).x);
     f = f + 0.25 * (2.0*eps - map(p + n*2.0*eps).x);
     f = f + 0.125 * (3.0*eps - map(p + n*3.0*eps).x);
@@ -215,19 +294,46 @@ float getAO(in vec3 p) {
 
 vec3 render(in vec3 ro, in vec3 rd, in vec2 coord) {
     //return rd;  // camera ray direction debug view
-    vec3 col = texture2D( iChannel0, coord ).xyz;//vec3(0.1, 0.1, 0.1);
-    vec2 res = castRay(ro,rd);
+    //vec3 col = texture2D( iChannel0, coord ).xyz;//vec3(0.1, 0.1, 0.1);
+    vec3 col = ambient;
+    vec3 res = castRay(ro,rd);
     float t = res.x;
 	float m = res.y;
     vec3 p = ro + t*rd;
     p = p - eps*rd;
-    if( m>-0.5 ) {
-        col = clamp(vec3(0.85,0.85,0.85)
-                    * getLighting(getNormal(p),p)
-                    * getAO(p)
+
+//toggle for distance-from-camera view
+#if 0
+    return clamp(vec3(1.0-t/tmax,1.0-t/tmax,0.0),0.0,1.0);
+#endif
+
+//toggle for iterations
+#if 0
+    return clamp(vec3(1.0 - float(res.z)/float(iterations)),0.0,1.0);
+#endif
+
+    if( m>-0.5) {
+        col = clamp(getMaterialColor(m)
+                    * getLighting(getNormal(p,m),p)
+                    * getAO(p,m)
                     ,0.0,1.0)
                     + ambK * ambient;
+        //col = clamp((ambK*ambient + getMaterialColor(m)*(1.0 - spint) + specular*spint)
+        //            * getLighting(getNormal(p),p)
+        //            * getAO(p)
+        //            ,0.0,1.0);
     }
+
+//toggle for normals render
+#if 0
+    return vec3( abs(getNormal(p,m)));
+#endif
+
+//toggle for AO render
+#if 0
+    return clamp(vec3(0.85)*getAO(p,m),0.0,1.0);
+#endif
+
     return vec3( clamp(col,0.0,1.0) );
 }
 
