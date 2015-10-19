@@ -1,6 +1,7 @@
 
 // -------------------------
 // Distance Functions, from IQ
+// - returns the distance to the object
 // -------------------------
 
 float sdPlane( vec3 p )
@@ -116,10 +117,16 @@ vec3 opTwist( vec3 p )
 
 // ------------------------
 // Scene Setup
+// - for some position, returns the distance to the nearest DF object
 // ------------------------
 vec2 map( in vec3 pos )
 {
-    vec2 res = opU( vec2( opS(sdPlane(pos),sdCylinder(pos, vec2(0.5,0.1))), 1.0 ),
+    vec2 res = opU (vec2(sdPlane(pos),1.0),vec2(sdCylinder(pos,vec2(2.0,0.05)),1.0));
+    float pit1 = opS(res.x,sdCylinder(pos, vec2(1.9,0.1)));
+    float pit2 = opS(pit1,sdCylinder(pos, vec2(1.8,0.2)));
+    float pit3 = opS(pit2,sdCylinder(pos, vec2(1.7,0.3)));
+    float pit4 = opS(pit3,sdTorus(pos,vec2(1.0,.5)));
+    res = opU( vec2( pit4,1.0),
 	                vec2( sdSphere(pos-vec3(-1.0,0.15, 0.0), 0.25 ), 50 ) );
     res = opU( res,
                vec2( sdBox(pos-vec3(1.0,.5,-0.5), vec3(0.25,0.1,0.25)), 25) );
@@ -130,11 +137,12 @@ vec2 map( in vec3 pos )
 // Rendery Bits
 // ------------------------
 const vec3 dirLight = normalize(vec3(-5.0,15.0,-5.0)); //this is TO light, kind of
-const float tmin = 1.0;
-const float tmax = 20.0;
+const vec3 ptLight = vec3(0.0,1.0,0.0);
+const float tmin = 0.0001;
+const float tmax = 10.0;
 const float precis = 0.002;
 const float eps = 0.0001;
-const float k = 128.0; //ao, soft shadows
+const float k = 12.0; //ao, soft shadows
 
 vec2 castRay( in vec3 ro, in vec3 rd )
 {
@@ -159,23 +167,35 @@ vec3 getNormal(in vec3 p )
     vec2 hze = map(p + vec3(0,0,eps));
 
     vec3 n = (1.0/eps) * (map(p).x - vec3(hxe.x,hye.x,hze.x));
-    return normalize( -n );
+    return normalize(-n);
 }
 
 float getShadow(in vec3 ro, in vec3 rd) { //ro - point, rd - light direction
-    float res = 1.0;
     vec2 ray = castRay(ro,rd);
     float t = ray.x;
     float m = ray.y;
     if(m>-0.5) {
         return 0.0;
     }
-    res = min(res,k*m/t);
-    return res;
+    return 1.0;
+}
+
+float getSoft(in vec3 ro, in vec3 rd) {
+    float shade = 1.0;
+    float t = tmin;
+
+    for(int i = 0; i < 50; i++) {
+        float dist = map(ro + t*rd).x;
+        if(dist < tmin) {return 0.0;}
+        shade = min(shade, k*dist/t);
+        t += dist;
+    }
+    return shade;
 }
 
 float getLighting(in vec3 n, in vec3 p) {
-    return dot(n,dirLight) * getShadow(p,dirLight);
+    vec3 ptDir = normalize(ptLight - p);
+    return dot(n,ptDir) * getSoft(p,ptDir);
 }
 
 float getAO(in vec3 p) {
@@ -190,13 +210,14 @@ float getAO(in vec3 p) {
     return 1.0 - k*f;
 }
 
-vec3 render(in vec3 ro, in vec3 rd) {
+vec3 render(in vec3 ro, in vec3 rd, in vec2 coord) {
     //return rd;  // camera ray direction debug view
-    vec3 col = vec3(0.1, 0.1, 0.1);
+    vec3 col = texture2D( iChannel0, coord ).xyz;//vec3(0.1, 0.1, 0.1);
     vec2 res = castRay(ro,rd);
     float t = res.x;
 	float m = res.y;
     vec3 p = ro + t*rd;
+    p = p - eps*rd;
     if( m>-0.5 ) {
         col = vec3(0.85,0.85,0.85)
             * getLighting(getNormal(p),p);
@@ -240,7 +261,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec3 rd = ca * normalize(vec3(p.xy, 2.0));
 
     // render
-    vec3 col = render(ro, rd);
+    vec3 col = render(ro, rd, p);
 
     col = pow(col, vec3(0.4545));
 
