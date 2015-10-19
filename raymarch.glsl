@@ -130,6 +130,8 @@ vec2 map( in vec3 pos )
 	                vec2( sdSphere(pos-vec3(-1.0,0.15, 0.0), 0.25 ), 50 ) );
     res = opU( res,
                vec2( sdBox(pos-vec3(1.0,.5,-0.5), vec3(0.25,0.1,0.25)), 25) );
+    res = opU( res,
+               vec2(sdSphere(pos-vec3(0.0,0.0, 0.0), 0.25 ), 10) );
     return res;
 }
 
@@ -138,11 +140,13 @@ vec2 map( in vec3 pos )
 // ------------------------
 const vec3 dirLight = normalize(vec3(-5.0,15.0,-5.0)); //this is TO light, kind of
 const vec3 ptLight = vec3(0.0,1.0,0.0);
-const float tmin = 0.0001;
+const float tmin = .002;
 const float tmax = 10.0;
 const float precis = 0.002;
-const float eps = 0.0001;
-const float k = 12.0; //ao, soft shadows
+const float eps = 0.01;
+const float k = 32.0; //ao, soft shadows
+const vec3 ambient = vec3(0.2,0.2,0.5);
+const float ambK = 0.01;
 
 vec2 castRay( in vec3 ro, in vec3 rd )
 {
@@ -183,14 +187,13 @@ float getShadow(in vec3 ro, in vec3 rd) { //ro - point, rd - light direction
 float getSoft(in vec3 ro, in vec3 rd) {
     float shade = 1.0;
     float t = tmin;
-
     for(int i = 0; i < 50; i++) {
         float dist = map(ro + t*rd).x;
-        if(dist < tmin) {return 0.0;}
+        if(dist < eps) {return 0.0;}
         shade = min(shade, k*dist/t);
         t += dist;
     }
-    return shade;
+    return clamp(shade, 0.0, 1.0);
 }
 
 float getLighting(in vec3 n, in vec3 p) {
@@ -202,12 +205,12 @@ float getAO(in vec3 p) {
     //separately calculate the 5 'feelers'?
     //totally should have done this in a loop :(
     vec3 n = getNormal(p);
-    float f = 0.5 * (eps - castRay(p + n*eps,-n).x);
-    f = f + 0.25 * (2.0*eps - castRay(p + n*2.0*eps,-n).x);
-    f = f + 0.125 * (3.0*eps - castRay(p + n*3.0*eps,-n).x);
-    f = f + 0.0625 * (4.0*eps - castRay(p + n*4.0*eps,-n).x);
-    f = f + 0.03125 * (5.0*eps - castRay(p + n*5.0*eps,-n).x);
-    return 1.0 - k*f;
+    float f = 0.5 * (eps - map(p + n*eps).x);
+    f = f + 0.25 * (2.0*eps - map(p + n*2.0*eps).x);
+    f = f + 0.125 * (3.0*eps - map(p + n*3.0*eps).x);
+    f = f + 0.0625 * (4.0*eps - map(p + n*4.0*eps).x);
+    f = f + 0.03125 * (5.0*eps - map(p + n*5.0*eps).x);
+    return clamp(1.0 - k*f,0.0,1.0);
 }
 
 vec3 render(in vec3 ro, in vec3 rd, in vec2 coord) {
@@ -219,8 +222,11 @@ vec3 render(in vec3 ro, in vec3 rd, in vec2 coord) {
     vec3 p = ro + t*rd;
     p = p - eps*rd;
     if( m>-0.5 ) {
-        col = vec3(0.85,0.85,0.85)
-            * getLighting(getNormal(p),p);
+        col = clamp(vec3(0.85,0.85,0.85)
+                    * getLighting(getNormal(p),p)
+                    * getAO(p)
+                    ,0.0,1.0)
+                    + ambK * ambient;
     }
     return vec3( clamp(col,0.0,1.0) );
 }
